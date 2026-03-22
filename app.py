@@ -19,6 +19,8 @@ ticker = st.sidebar.text_input("Ticker (e.g. AAPL, MSFT, TCS.NS)", value="AAPL")
 days = st.sidebar.number_input("Days historical", min_value=60, max_value=2000, value=365)
 short_window = st.sidebar.number_input("Short SMA days", min_value=2, max_value=200, value=20)
 long_window = st.sidebar.number_input("Long SMA days", min_value=2, max_value=400, value=50)
+bb_window = st.sidebar.number_input("Bollinger Band period", min_value=5, max_value=100, value=20)
+bb_std = st.sidebar.number_input("Bollinger Band std dev", min_value=1.0, max_value=4.0, value=2.0, step=0.5)
 
 if st.sidebar.button("Refresh data"):
     # Use the supported rerun (newer Streamlit)
@@ -121,7 +123,7 @@ def calculate_rsi(prices, period=14):
     return 100 - (100 / (1 + rs))
 
 # ---- Tabs for the four functions ----
-tab1, tab2, tab3, tab4 = st.tabs(["Price Chart", "SMA & Signals", "Simple Predictor", "RSI Analysis"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["Price Chart", "SMA & Signals", "Bollinger Bands", "Simple Predictor", "RSI Analysis"])
 
 with tab1:
     st.subheader(f"{ticker} — Price chart (last {len(df)} days)")
@@ -173,6 +175,60 @@ with tab2:
             st.write("No recent sell signals found.")
 
 with tab3:
+    st.subheader("Bollinger Bands — Volatility Analysis")
+    data = df.copy()
+    data['BB_mid'] = data['Close'].rolling(bb_window).mean()
+    data['BB_std'] = data['Close'].rolling(bb_window).std()
+    data['BB_upper'] = data['BB_mid'] + bb_std * data['BB_std']
+    data['BB_lower'] = data['BB_mid'] - bb_std * data['BB_std']
+    data['BB_width'] = (data['BB_upper'] - data['BB_lower']) / data['BB_mid']
+    data.dropna(inplace=True)
+
+    if data.empty:
+        st.warning("Not enough data to compute Bollinger Bands. Increase 'Days historical'.")
+    else:
+        fig_bb = go.Figure()
+        fig_bb.add_trace(go.Scatter(x=data.index, y=data['BB_upper'], name='Upper Band',
+                                     line=dict(color='rgba(255,0,0,0.4)', dash='dash')))
+        fig_bb.add_trace(go.Scatter(x=data.index, y=data['BB_lower'], name='Lower Band',
+                                     line=dict(color='rgba(0,128,0,0.4)', dash='dash'),
+                                     fill='tonexty', fillcolor='rgba(173,216,230,0.15)'))
+        fig_bb.add_trace(go.Scatter(x=data.index, y=data['BB_mid'], name=f'SMA {bb_window}',
+                                     line=dict(color='orange', width=1)))
+        fig_bb.add_trace(go.Scatter(x=data.index, y=data['Close'], name='Close',
+                                     line=dict(color='blue', width=1.2)))
+        fig_bb.update_layout(title="Bollinger Bands", height=520, margin=dict(l=10, r=10, t=30, b=10))
+        st.plotly_chart(fig_bb, use_container_width=True)
+
+        # Current position relative to bands
+        last = data.iloc[-1]
+        pct_b = (last['Close'] - last['BB_lower']) / (last['BB_upper'] - last['BB_lower'])
+        if last['Close'] > last['BB_upper']:
+            st.error(f"Price is ABOVE the upper band — potentially overbought (%B: {pct_b:.2f})")
+        elif last['Close'] < last['BB_lower']:
+            st.success(f"Price is BELOW the lower band — potentially oversold (%B: {pct_b:.2f})")
+        else:
+            st.info(f"Price is within the bands (%B: {pct_b:.2f} — 0 = lower band, 1 = upper band)")
+
+        # Bandwidth chart (squeeze detection)
+        st.write("Bandwidth (narrowing = squeeze, potential breakout ahead):")
+        fig_bw = go.Figure()
+        fig_bw.add_trace(go.Scatter(x=data.index, y=data['BB_width'], name='Bandwidth',
+                                     line=dict(color='teal')))
+        fig_bw.update_layout(height=250, margin=dict(l=10, r=10, t=10, b=10))
+        st.plotly_chart(fig_bw, use_container_width=True)
+
+        # Touches / breaches
+        above = data[data['Close'] > data['BB_upper']]
+        below = data[data['Close'] < data['BB_lower']]
+        st.write(f"Days above upper band: {len(above)} — Last 5:")
+        if not above.empty:
+            st.dataframe(above[['Close', 'BB_upper']].tail(5))
+        st.write(f"Days below lower band: {len(below)} — Last 5:")
+        if not below.empty:
+            st.dataframe(below[['Close', 'BB_lower']].tail(5))
+
+with tab4:
     st.subheader("Very basic next-day Close predictor (Linear Regression vs RandomForest)")
     # Ensure Close exists (fetch_data guarantees it, but double-check)
     if 'Close' not in df.columns:
@@ -249,7 +305,7 @@ with tab3:
             csv = download_df.to_csv(index=False).encode('utf-8')
             st.download_button("Download test-set results CSV", csv, file_name=f"{ticker}_predictions.csv", mime='text/csv')
 
-with tab4:
+with tab5:
     st.subheader("RSI (Relative Strength Index) Analysis")
     data = df.copy()
     data['RSI'] = calculate_rsi(data['Close'])
