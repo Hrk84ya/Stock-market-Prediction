@@ -59,7 +59,7 @@ def fetch_data(ticker, days):
 
     # 1) primary attempt: yf.download
     try:
-        df = yf.download(ticker, start=start, end=end, progress=False)
+        df = yf.download(ticker, start=start, end=end, progress=False, multi_level_index=False)
     except Exception:
         df = None
     df = clean_df(df)
@@ -80,7 +80,7 @@ def fetch_data(ticker, days):
     if not ticker.upper().endswith('.NS'):
         try_ticker = ticker + '.NS'
         try:
-            df3 = yf.download(try_ticker, start=start, end=end, progress=False)
+            df3 = yf.download(try_ticker, start=start, end=end, progress=False, multi_level_index=False)
         except Exception:
             df3 = None
         df3 = clean_df(df3)
